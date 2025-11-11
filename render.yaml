@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: med-telegram-bot
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: WEBHOOK_SECRET_TOKEN
+        sync: false
+      - key: ADMIN_API_KEY
+        sync: false
