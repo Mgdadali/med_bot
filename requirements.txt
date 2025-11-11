@@ -3,3 +3,4 @@ uvicorn
 requests
 sqlalchemy
 python-dotenv
+python-telegram-bot==13.15
