@@ -3,12 +3,11 @@ import os
 import requests
 import logging
 from fastapi import FastAPI, Header, HTTPException
-from app.db import init_db
-from app import crud
+from app import crud  # crud يتعامل الآن مع قاعدة البيانات SQLite
 
 # ========= Logging مفصل =========
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.DEBUG,  
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -23,7 +22,7 @@ app = FastAPI(title="Med Faculty Bot")
 
 @app.on_event("startup")
 async def startup():
-    init_db()
+    crud.init_db()  # تهيئة قاعدة البيانات ورفع الجداول
     logger.info("Database initialized successfully.")
 
 # ========= دوال مساعدة =========
@@ -89,7 +88,6 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             raise HTTPException(status_code=401, detail="Invalid secret header")
 
         logger.debug(f"Received update: {update}")
-
         msg = update.get("message")
         if not msg:
             return {"ok": True}
@@ -97,30 +95,6 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
         chat_id = msg["chat"]["id"]
         text = msg.get("text", "")
         user = msg.get("from", {})
-
-        # ========= دعم الملفات العادية أو المعاد توجيهها =========
-        file_data = None
-        content_type = None
-
-        if "document" in msg:
-            file_data = msg["document"]
-            content_type = "pdf"
-        elif "video" in msg:
-            file_data = msg["video"]
-            content_type = "video"
-        elif "photo" in msg:
-            file_data = msg["photo"][-1]
-            content_type = "photo"
-
-        if file_data and crud.is_waiting_file(chat_id):
-            file_id = file_data["file_id"]
-            send_message(chat_id,
-                f"✅ تم استلام الملف بنجاح!\nfile_id:\n`{file_id}`\nالآن أرسل الأمر التالي لإضافته:\n`/addfile <course> {content_type} {file_id}`",
-                parse_mode=None
-            )
-            crud.set_waiting_file(chat_id, False)
-            logger.info(f"Received file from admin: {file_id} (type={content_type})")
-            return {"ok": True}
 
         if not text:
             send_message(chat_id, "⚠️ لم أفهم الرسالة.", parse_mode=None)
@@ -134,7 +108,7 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             parts = text.split()
             if len(parts) == 4:
                 course, ctype, file_id = parts[1], parts[2], parts[3]
-                crud.add_material(course, ctype, file_id)
+                crud.add_material(course, ctype, file_id)  # يخزن في SQLite
                 send_message(chat_id, f"✅ تمت إضافة {ctype} لمادة {course} بنجاح!", parse_mode=None)
                 logger.info(f"Admin added file: course={course}, type={ctype}, file_id={file_id}")
             else:
@@ -142,24 +116,38 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             return {"ok": True}
 
         if text == "رفع ملف جديد 📤" and is_admin(user):
-            send_message(chat_id, "📤 أرسل الآن الملف (PDF / فيديو) للبوت، وسأعطيك file_id مباشرة.", parse_mode=None)
+            send_message(chat_id,
+                         "📤 أرسل الآن الملف (PDF / فيديو) للبوت، وسأعطيك file_id مباشرة.",
+                         parse_mode=None)
             crud.set_waiting_file(chat_id, True)
             logger.info(f"Admin {user.get('username')} is uploading a file.")
             return {"ok": True}
 
+        if "document" in msg or "video" in msg:
+            if crud.is_waiting_file(chat_id):
+                if "document" in msg:
+                    file_id = msg["document"]["file_id"]
+                    content_type = "pdf"
+                else:
+                    file_id = msg["video"]["file_id"]
+                    content_type = "video"
+
+                send_message(chat_id,
+                             f"✅ تم استلام الملف بنجاح!\nfile_id:\n`{file_id}`\nالآن أرسل الأمر التالي لإضافته:\n`/addfile <course> {content_type} {file_id}`",
+                             parse_mode=None
+                             )
+                crud.set_waiting_file(chat_id, False)
+                logger.info(f"Received file from admin: {file_id} (type={content_type})")
+                return {"ok": True}
+
         # ========= أوامر المستخدم =========
         if text.startswith("/start"):
-            send_message(chat_id,
-                "👋 *مرحبًا بك في بوت كلية الطب – جامعة المناقل!*\n\n"
-    "📚 هذا البوت صُمم لمساعدتك في الوصول إلى كل محتوى ومقررات الطب بسهولة:\n"
-    "📝 فيديوهات تعليمية\n"
-    "📄 ملفات PDF\n"
-    "📚 مراجع علمية\n\n"
-    "⚠️ *تنويه:* البوت حالياً في مراحل الصيانة والتجهيز لتوفير كل المواد بأداء مستقر.\n\n"
-    "✨ استخدم الأزرار أدناه للتنقل بين المقررات والمحتويات.",
-                reply_markup=get_main_keyboard(is_admin(user)),
-                parse_mode=None
+            welcome_text = (
+                "👋 مرحبًا بك في بوت كلية الطب – جامعة المناقل!\n"
+                "البوت في مراحل الصيانة والتجهيزات لتوفير كل المواد بأداء مستقر.\n"
+                "اختر من القائمة أدناه:"
             )
+            send_message(chat_id, welcome_text, reply_markup=get_main_keyboard(is_admin(user)), parse_mode=None)
             return {"ok": True}
 
         if text == "تواصل مع المطور 👨‍💻":
@@ -207,7 +195,7 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             else:
                 content_type = "reference"
 
-            mat = crud.get_material(course_name, content_type)
+            mat = crud.get_material(course_name, content_type)  # يسترجع من SQLite
             if mat and mat.get("file_id"):
                 send_message(chat_id, f"📨 جارٍ إرسال {content_type} الخاص بمقرر {course_name}...", parse_mode=None)
                 send_file(chat_id, mat["file_id"], content_type)
@@ -217,7 +205,6 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
                 logger.warning(f"Content not found: course={course_name}, type={content_type}")
             return {"ok": True}
 
-        # ========= الرد الافتراضي =========
         send_message(chat_id, "🤔 لم أفهم الأمر، يرجى اختيار من القائمة.", parse_mode=None)
         logger.info(f"Unknown command from {chat_id}: {text}")
         return {"ok": True}
