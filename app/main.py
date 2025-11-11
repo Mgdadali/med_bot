@@ -7,7 +7,7 @@ from app import crud
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_SECRET_TOKEN = os.getenv("WEBHOOK_SECRET_TOKEN", None)
-ADMIN_USERNAME = "@Mgdad_Ali"  # حساب المطور
+ADMIN_USERNAME = "@Mgdad_Ali"
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 app = FastAPI(title="Med Faculty Bot")
@@ -58,24 +58,26 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             send_message(chat_id, "❌ الصيغة الصحيحة:\n`/addfile <course> <type> <file_id>`")
         return {"ok": True}
 
-    # ----- ميزة ذكية: رفع ملف جديد -----
-    if text == "/upload" and is_admin(user):
+    # ----- زر رفع ملف جديد للأدمن -----
+    if text == "رفع ملف جديد 📤" and is_admin(user):
         buttons = {"keyboard": [[{"text": "🏠 القائمة الرئيسية"}]], "resize_keyboard": True}
-        send_message(chat_id, "📤 أرسل الآن الملف (PDF / فيديو / مرجع) للبوت، وسأعطيك file_id مباشرة.", reply_markup=buttons)
+        send_message(chat_id, "📤 أرسل الآن الملف (PDF / فيديو) للبوت، وسأعطيك file_id مباشرة.", reply_markup=buttons)
         crud.set_waiting_file(chat_id, True)
         return {"ok": True}
 
-    # ----- استقبال الملف بعد /upload -----
+    # ----- استقبال الملف بعد الضغط على زر رفع ملف جديد -----
     if "document" in msg or "video" in msg:
-        waiting = crud.is_waiting_file(chat_id)
-        if waiting:
+        if crud.is_waiting_file(chat_id):
             if "document" in msg:
                 file_id = msg["document"]["file_id"]
                 content_type = "pdf"
             else:
                 file_id = msg["video"]["file_id"]
                 content_type = "video"
-            send_message(chat_id, f"✅ تم استلام الملف بنجاح!\nfile_id:\n`{file_id}`\nالآن أرسل الأمر التالي لإضافة الملف للمقرر:\n`/addfile <course> {content_type} {file_id}`")
+
+            send_message(chat_id,
+                f"✅ تم استلام الملف بنجاح!\nfile_id:\n`{file_id}`\nالآن أرسل الأمر التالي لإضافة الملف للمقرر:\n`/addfile <course> {content_type} {file_id}`"
+            )
             crud.set_waiting_file(chat_id, False)
             return {"ok": True}
 
@@ -85,7 +87,8 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
         buttons = {
             "keyboard": [
                 [{"text": "ابدأ 🎓"}],
-                [{"text": "تواصل مع المطور 👨‍💻"}]
+                [{"text": "تواصل مع المطور 👨‍💻"}],
+                [{"text": "رفع ملف جديد 📤"}] if is_admin(user) else []
             ],
             "resize_keyboard": True
         }
@@ -93,7 +96,7 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
         return {"ok": True}
 
     # تواصل مع المطور
-    if "تواصل" in text:
+    if text.strip() == "تواصل مع المطور 👨‍💻":
         send_message(chat_id, f"📩 يمكنك التواصل مع المطور عبر الحساب التالي:\n{ADMIN_USERNAME}")
         return {"ok": True}
 
@@ -102,7 +105,8 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
         buttons = {
             "keyboard": [
                 [{"text": "ابدأ 🎓"}],
-                [{"text": "تواصل مع المطور 👨‍💻"}]
+                [{"text": "تواصل مع المطور 👨‍💻"}],
+                [{"text": "رفع ملف جديد 📤"}] if is_admin(user) else []
             ],
             "resize_keyboard": True
         }
@@ -158,9 +162,9 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             content_type = "reference"
 
         mat = crud.get_material(course_name, content_type)
-        if mat and mat.file_id:
+        if mat and mat["file_id"]:
             send_message(chat_id, f"جارٍ إرسال {content_type} الخاص بمقرر {course_name}...")
-            send_file(chat_id, mat.file_id, content_type)
+            send_file(chat_id, mat["file_id"], content_type)
         else:
             send_message(chat_id, "🚧 لم يتم العثور على هذا المحتوى بعد.")
         return {"ok": True}
