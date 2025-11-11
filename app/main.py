@@ -1,20 +1,36 @@
 from fastapi import FastAPI, Request
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
-from app import crud
 import os
 
+# ----------------------------------------
+# إعدادات البوت
+# ----------------------------------------
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # ضع توكن البوت في Environment Variables
+bot = Bot(BOT_TOKEN)
 app = FastAPI()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-bot = Bot(BOT_TOKEN)
+# ----------------------------------------
+# متغيرات للتحكم بالرفع
+# ----------------------------------------
+waiting_for_file = {}  # key: chat_id, value: True/False
 
+def set_waiting_file(chat_id, value: bool):
+    waiting_for_file[chat_id] = value
 
+def is_waiting_file(chat_id):
+    return waiting_for_file.get(chat_id, False)
+
+# ----------------------------------------
+# Webhook
+# ----------------------------------------
 @app.post("/webhook")
 async def webhook(request: Request):
     update = await request.json()
-    print("🔹 Received update:", update)
+    print("Received update:", update)
 
-    # حالة الرسائل النصية (للتعامل مع /start أو رفع ملف)
+    # ----------------------------------------
+    # معالجة الرسائل النصية
+    # ----------------------------------------
     if "message" in update:
         chat_id = update["message"]["chat"]["id"]
         text = update["message"].get("text", "")
@@ -24,23 +40,23 @@ async def webhook(request: Request):
             keyboard = [
                 [InlineKeyboardButton("📚 ابدأ", callback_data="start")],
                 [InlineKeyboardButton("📞 تواصل مع المطور", callback_data="contact_dev")],
-                [InlineKeyboardButton("📤 رفع ملف جديد", callback_data="upload_file")],
+                [InlineKeyboardButton("📤 رفع ملف جديد", callback_data="upload_file")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             bot.send_message(chat_id, "أهلاً بك في بوت كلية الطب 👨‍⚕️\nاختر من القائمة:", reply_markup=reply_markup)
 
-        # استقبال ملف أثناء الرفع
-        elif crud.is_waiting_file(chat_id):
+        # استقبال الملفات أثناء رفعها
+        elif is_waiting_file(chat_id):
             if "document" in update["message"]:
                 file_id = update["message"]["document"]["file_id"]
-                crud.set_waiting_file(chat_id, False)
-                bot.send_message(chat_id, f"✅ تم استلام الملف بنجاح!\n📄 file_id الخاص به:\n`{file_id}`", parse_mode="Markdown")
+                set_waiting_file(chat_id, False)
+                bot.send_message(chat_id, f"✅ تم استلام الملف بنجاح!\n📄 file_id:\n`{file_id}`", parse_mode="Markdown")
             else:
                 bot.send_message(chat_id, "❌ أرسل ملف PDF أو مستند فقط، وليس نصاً.")
-        else:
-            bot.send_message(chat_id, "استخدم الأزرار أدناه 👇")
 
-    # حالة الضغط على الأزرار (callback)
+    # ----------------------------------------
+    # معالجة أزرار القوائم (callback_query)
+    # ----------------------------------------
     elif "callback_query" in update:
         query = update["callback_query"]
         data = query["data"]
@@ -52,30 +68,31 @@ async def webhook(request: Request):
                 [InlineKeyboardButton("📖 المواد الدراسية", callback_data="materials")],
                 [InlineKeyboardButton("📞 تواصل مع المطور", callback_data="contact_dev")],
                 [InlineKeyboardButton("📤 رفع ملف جديد", callback_data="upload_file")],
-                [InlineKeyboardButton("🔙 رجوع", callback_data="back")],
+                [InlineKeyboardButton("🔙 رجوع", callback_data="back")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             bot.send_message(chat_id, "اختر من القائمة التالية 👇", reply_markup=reply_markup)
 
         # زر تواصل مع المطور
         elif data == "contact_dev":
-            bot.send_message(chat_id, "📞 للتواصل مع المطور:\n@Mgdad_Ali")
+            bot.send_message(chat_id, "📞 تواصل مع المطور: @Mgdad_Ali")
 
         # زر رفع ملف
         elif data == "upload_file":
-            bot.send_message(chat_id, "📤 أرسل الآن الملف الذي تريد رفعه (PDF أو مرجع).")
-            crud.set_waiting_file(chat_id, True)
+            bot.send_message(chat_id, "📤 أرسل الآن الملف الذي تريد رفعه (PDF أو مستند).")
+            set_waiting_file(chat_id, True)
 
         # زر رجوع
         elif data == "back":
             keyboard = [
                 [InlineKeyboardButton("📚 ابدأ", callback_data="start")],
                 [InlineKeyboardButton("📞 تواصل مع المطور", callback_data="contact_dev")],
-                [InlineKeyboardButton("📤 رفع ملف جديد", callback_data="upload_file")],
+                [InlineKeyboardButton("📤 رفع ملف جديد", callback_data="upload_file")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             bot.send_message(chat_id, "⬅️ عدت إلى القائمة الرئيسية:", reply_markup=reply_markup)
 
+        # أي زر غير معروف
         else:
             bot.send_message(chat_id, "❓ لم أفهم هذا الخيار، حاول مجددًا.")
 
