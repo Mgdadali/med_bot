@@ -93,16 +93,37 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             return {"ok": True}
 
         chat_id = msg["chat"]["id"]
-        text = msg.get("text", "")
         user = msg.get("from", {})
 
+        # 🟢 أولاً: فحص الملفات قبل أي شيء آخر
+        if "document" in msg or "video" in msg:
+            if crud.is_waiting_file(chat_id):
+                if "document" in msg:
+                    file_id = msg["document"]["file_id"]
+                    content_type = "pdf"
+                else:
+                    file_id = msg["video"]["file_id"]
+                    content_type = "video"
+
+                send_message(
+                    chat_id,
+                    f"✅ تم استلام الملف بنجاح!\nfile_id:\n`{file_id}`\n"
+                    f"الآن أرسل الأمر التالي لإضافته:\n`/addfile <course> {content_type} {file_id}`",
+                    parse_mode="Markdown"
+                )
+                crud.set_waiting_file(chat_id, False)
+                logger.info(f"Received file from admin: {file_id} (type={content_type})")
+                return {"ok": True}
+
+        # 🔵 ثانياً: معالجة النصوص فقط بعد فحص الملفات
+        text = msg.get("text", "")
         if not text:
-            send_message(chat_id, "⚠️ لم أفهم الرسالة.", parse_mode=None)
+            # لا ترسل “لم أفهم” إذا كان في ملف
+            logger.debug("Message has no text or recognized file.")
             return {"ok": True}
 
         text = text.strip()
         logger.info(f"Message from {chat_id} ({user.get('username')}): {text}")
-
         # ========= أوامر الأدمن =========
         if text.startswith("/addfile") and is_admin(user):
             parts = text.split()
