@@ -179,23 +179,11 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             send_message(chat_id, "📚 اختر المقرر الدراسي:", reply_markup=get_courses_keyboard())
             return {"ok": True}
 
-        # ========= عند اختيار مادة =========
-        course_names = [
-            "Anatomy", "Pathology", "Histology", "Parasitology",
-            "Physiology", "Biochemistry", "Embryology",
-            "Microbiology", "Pharmacology"
-        ]
-
-        if any(c in text for c in course_names):
-            course = next(c for c in course_names if c in text)
-            send_message(chat_id, f"📂 اختر نوع المحتوى لمقرر {course}:", reply_markup=get_types_keyboard(course))
-            return {"ok": True}
-
         if text == "⬅️ رجوع":
             send_message(chat_id, "⬅️ رجعت لاختيار المقرر:", reply_markup=get_courses_keyboard())
             return {"ok": True}
 
-        # ========= اختيار نوع المحتوى =========
+        # ========= أولاً: التحقق من نوع المحتوى =========
         if any(x in text for x in ["PDF", "فيديو", "مرجع"]):
             parts = text.split()
             course_name = parts[0]
@@ -212,6 +200,18 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
                 send_file(chat_id, mat["file_id"], content_type)
             else:
                 send_message(chat_id, "🚧 لم يتم العثور على هذا المحتوى بعد.")
+            return {"ok": True}
+
+        # ========= ثانيًا: التحقق من اختيار المقرر =========
+        course_names = [
+            "Anatomy", "Pathology", "Histology", "Parasitology",
+            "Physiology", "Biochemistry", "Embryology",
+            "Microbiology", "Pharmacology"
+        ]
+
+        if any(c in text for c in course_names):
+            course = next(c for c in course_names if c in text)
+            send_message(chat_id, f"📂 اختر نوع المحتوى لمقرر {course}:", reply_markup=get_types_keyboard(course))
             return {"ok": True}
 
         # ========= افتراضي =========
