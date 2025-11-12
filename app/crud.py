@@ -32,9 +32,11 @@ def init_db():
 
 # ========= مواد دائمة =========
 def add_material(course, type_, file_id):
+    """إضافة ملف دائم للمواد (سواء عادي أو forwarded)"""
     with LOCK:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
+        # INSERT OR REPLACE يحل مشكلة وجود نفس file_id
         c.execute(
             "INSERT OR REPLACE INTO materials (course, type, file_id) VALUES (?, ?, ?)",
             (course, type_, file_id)
@@ -43,6 +45,7 @@ def add_material(course, type_, file_id):
         conn.close()
 
 def get_material(course, type_):
+    """استرجاع ملف لمقرر معين ونوع محدد"""
     with LOCK:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -58,7 +61,7 @@ def get_material(course, type_):
 
 # ========= ملفات مؤقتة قبل تحديد المقرر =========
 def set_waiting_file(chat_id, flag):
-    """حفظ حالة انتظار رفع الملف"""
+    """تعيين حالة انتظار رفع الملف"""
     if not flag:
         # إزالة الملف المؤقت عند الانتهاء
         with LOCK:
@@ -68,11 +71,11 @@ def set_waiting_file(chat_id, flag):
             conn.commit()
             conn.close()
     else:
-        # لا نفعل شيئًا هنا، سيتم إضافة file_id لاحقًا
+        # الانتظار لتحديد المقرر لاحقًا
         pass
 
 def set_waiting_file_fileid(chat_id, file_id, type_):
-    """حفظ الملف المرفوع مؤقتًا"""
+    """حفظ الملف المرفوع مؤقتًا (عادي أو forwarded)"""
     with LOCK:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -84,6 +87,7 @@ def set_waiting_file_fileid(chat_id, file_id, type_):
         conn.close()
 
 def is_waiting_file(chat_id):
+    """هل هذا الـ chat_id ينتظر رفع ملف؟"""
     with LOCK:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -93,7 +97,7 @@ def is_waiting_file(chat_id):
         return row is not None
 
 def get_waiting_file(chat_id):
-    """استرجاع الملف المرفوع مؤقتًا"""
+    """استرجاع الملف المرفوع مؤقتًا (عادي أو forwarded)"""
     with LOCK:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
