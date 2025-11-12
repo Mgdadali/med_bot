@@ -60,8 +60,12 @@ def get_main_keyboard(is_admin=False):
 def get_courses_keyboard():
     return {
         "keyboard": [
-            [{"text": "📘 التشريح"}, {"text": "🧠 الفسيولوجي"}],
-            [{"text": "🏠 القائمة الرئيسية"}, {"text": "جديد"}]
+            [{"text": "📘 Anatomy"}, {"text": "🧫 Pathology"}],
+            [{"text": "🔬 Histology"}, {"text": "🪱 Parasitology"}],
+            [{"text": "🧠 Physiology"}, {"text": "🧪 Biochemistry"}],
+            [{"text": "👶 Embryology"}, {"text": "🧫 Microbiology"}],
+            [{"text": "💊 Pharmacology"}],
+            [{"text": "🏠 القائمة الرئيسية"}, {"text": "⬅️ رجوع"}]
         ],
         "resize_keyboard": True
     }
@@ -98,7 +102,7 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
         text = msg.get("text", "")
         user = msg.get("from", {})
 
-        # ========= التعامل مع الملفات (عادية أو forwarded) =========
+        # ========= التعامل مع الملفات =========
         file_info = None
         content_type = None
 
@@ -116,7 +120,7 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
                 file_info = msg["video"]
                 content_type = "video"
 
-        # إذا تم إرسال ملف من الأدمن — يتم التعامل معه فورًا
+        # ========= استقبال ملف من الأدمن =========
         if file_info and is_admin(user):
             file_id = file_info["file_id"]
 
@@ -175,8 +179,15 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             send_message(chat_id, "📚 اختر المقرر الدراسي:", reply_markup=get_courses_keyboard())
             return {"ok": True}
 
-        if text in ["📘 التشريح", "🧠 الفسيولوجي"]:
-            course = "تشريح" if "التشريح" in text else "فسيولوجي"
+        # ========= عند اختيار مادة =========
+        course_names = [
+            "Anatomy", "Pathology", "Histology", "Parasitology",
+            "Physiology", "Biochemistry", "Embryology",
+            "Microbiology", "Pharmacology"
+        ]
+
+        if any(c in text for c in course_names):
+            course = next(c for c in course_names if c in text)
             send_message(chat_id, f"📂 اختر نوع المحتوى لمقرر {course}:", reply_markup=get_types_keyboard(course))
             return {"ok": True}
 
