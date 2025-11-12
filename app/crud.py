@@ -1,73 +1,105 @@
 # app/crud.py
 import sqlite3
-from typing import Optional
+import os
+import threading
 
-DB_PATH = "medbot.db"  # قاعدة بيانات دائمة على القرص
+DB_PATH = os.path.join(os.path.dirname(__file__), "bot.db")
+LOCK = threading.Lock()  # لضمان التزامن عند الوصول للقاعدة
 
-# ========= تهيئة قاعدة البيانات =========
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    # جدول المواد
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS materials (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        course TEXT NOT NULL,
-        type TEXT NOT NULL,
-        file_id TEXT NOT NULL
-    )
-    """)
-    
-    # جدول حالة انتظار رفع الملفات
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS waiting_files (
-        chat_id INTEGER PRIMARY KEY,
-        waiting INTEGER DEFAULT 0
-    )
-    """)
-    
-    conn.commit()
-    conn.close()
+    with LOCK:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        # جدول المواد الدائم
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS materials (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course TEXT NOT NULL,
+                type TEXT NOT NULL,
+                file_id TEXT NOT NULL UNIQUE
+            )
+        ''')
+        # جدول الملفات المرفوعة مؤقتًا قبل تحديد المقرر
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS waiting_files (
+                chat_id INTEGER PRIMARY KEY,
+                file_id TEXT NOT NULL,
+                type TEXT NOT NULL
+            )
+        ''')
+        conn.commit()
+        conn.close()
 
-# ========= المواد =========
-def add_material(course: str, content_type: str, file_id: str):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    # تحقق إذا المادة موجودة لنقوم بالتحديث بدل الإضافة
-    cursor.execute("SELECT id FROM materials WHERE course=? AND type=?", (course, content_type))
-    row = cursor.fetchone()
-    if row:
-        cursor.execute("UPDATE materials SET file_id=? WHERE id=?", (file_id, row[0]))
+# ========= مواد دائمة =========
+def add_material(course, type_, file_id):
+    with LOCK:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute(
+            "INSERT OR REPLACE INTO materials (course, type, file_id) VALUES (?, ?, ?)",
+            (course, type_, file_id)
+        )
+        conn.commit()
+        conn.close()
+
+def get_material(course, type_):
+    with LOCK:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute(
+            "SELECT course, type, file_id FROM materials WHERE course=? AND type=?",
+            (course, type_)
+        )
+        row = c.fetchone()
+        conn.close()
+        if row:
+            return {"course": row[0], "type": row[1], "file_id": row[2]}
+        return None
+
+# ========= ملفات مؤقتة قبل تحديد المقرر =========
+def set_waiting_file(chat_id, flag):
+    """حفظ حالة انتظار رفع الملف"""
+    if not flag:
+        # إزالة الملف المؤقت عند الانتهاء
+        with LOCK:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("DELETE FROM waiting_files WHERE chat_id=?", (chat_id,))
+            conn.commit()
+            conn.close()
     else:
-        cursor.execute("INSERT INTO materials (course, type, file_id) VALUES (?, ?, ?)", (course, content_type, file_id))
-    
-    conn.commit()
-    conn.close()
+        # لا نفعل شيئًا هنا، سيتم إضافة file_id لاحقًا
+        pass
 
-def get_material(course: str, content_type: str) -> Optional[dict]:
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT file_id FROM materials WHERE course=? AND type=?", (course, content_type))
-    row = cursor.fetchone()
-    conn.close()
-    if row:
-        return {"file_id": row[0]}
-    return None
+def set_waiting_file_fileid(chat_id, file_id, type_):
+    """حفظ الملف المرفوع مؤقتًا"""
+    with LOCK:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute(
+            "INSERT OR REPLACE INTO waiting_files (chat_id, file_id, type) VALUES (?, ?, ?)",
+            (chat_id, file_id, type_)
+        )
+        conn.commit()
+        conn.close()
 
-# ========= انتظار رفع الملفات =========
-def set_waiting_file(chat_id: int, waiting: bool):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO waiting_files (chat_id, waiting) VALUES (?, ?)", (chat_id, int(waiting)))
-    conn.commit()
-    conn.close()
+def is_waiting_file(chat_id):
+    with LOCK:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT file_id FROM waiting_files WHERE chat_id=?", (chat_id,))
+        row = c.fetchone()
+        conn.close()
+        return row is not None
 
-def is_waiting_file(chat_id: int) -> bool:
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT waiting FROM waiting_files WHERE chat_id=?", (chat_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return bool(row[0]) if row else False
+def get_waiting_file(chat_id):
+    """استرجاع الملف المرفوع مؤقتًا"""
+    with LOCK:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT file_id, type FROM waiting_files WHERE chat_id=?", (chat_id,))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            return {"file_id": row[0], "type": row[1]}
+        return None
