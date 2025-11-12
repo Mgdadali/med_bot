@@ -113,17 +113,16 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
         if file_info and crud.is_waiting_file(chat_id):
             file_id = file_info["file_id"]
 
-            # حفظ الملف تلقائيًا في قاعدة البيانات
-            crud.add_material("unknown_course", content_type, file_id)  # يمكن تعديل course لاحقًا
+            # حفظ الملف مؤقتًا في جدول انتظار مع النوع فقط
+            crud.set_waiting_file_fileid(chat_id, file_id, content_type)
 
             send_message(
                 chat_id,
                 f"✅ تم استلام الملف بنجاح!\n"
                 f"file_id:\n{file_id}\n"
-                f"الآن أرسل الأمر التالي لإضافته:\n"
+                f"الآن أرسل الأمر التالي لإضافته بشكل دائم:\n"
                 f"/addfile <course> {content_type} {file_id}"
             )
-            crud.set_waiting_file(chat_id, False)
             logger.info(f"Received file from admin: {file_id} (type={content_type})")
             return {"ok": True}
 
@@ -132,7 +131,7 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             parts = text.split()
             if len(parts) == 4:
                 course, ctype, file_id = parts[1], parts[2], parts[3]
-                crud.add_material(course, ctype, file_id)
+                crud.add_material(course, ctype, file_id)  # يخزن نهائيًا باسم المقرر
                 send_message(chat_id, f"✅ تمت إضافة {ctype} لمادة {course} بنجاح!")
                 logger.info(f"Admin added file: course={course}, type={ctype}, file_id={file_id}")
             else:
