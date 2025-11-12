@@ -26,10 +26,8 @@ async def startup():
 
 # ========= دوال مساعدة =========
 
-def send_message(chat_id, text, reply_markup=None, parse_mode=None):
+def send_message(chat_id, text, reply_markup=None):
     payload = {"chat_id": chat_id, "text": text}
-    if parse_mode:
-        payload["parse_mode"] = parse_mode
     if reply_markup:
         payload["reply_markup"] = reply_markup
     try:
@@ -104,7 +102,6 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
         file_info = None
         content_type = None
 
-        # التقاط أي ملف PDF أو فيديو (سواء مباشر أو موجه)
         if "document" in msg:
             file_info = msg["document"]
             content_type = "pdf"
@@ -126,10 +123,9 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             send_message(
                 chat_id,
                 f"✅ تم استلام الملف بنجاح!\n"
-                f"📎 file_id:\n`{file_id}`\n\n"
+                f"📎 file_id:\n{file_id}\n\n"
                 f"لربطه بمقرر معين استخدم:\n"
-                f"/addfile <course> {content_type} {file_id}",
-                parse_mode="Markdown"
+                f"/addfile <course> {content_type} {file_id}"
             )
             logger.info(f"Admin sent file: {file_id} (type={content_type})")
             crud.set_waiting_file(chat_id, False)
