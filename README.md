@@ -29,4 +29,4 @@
 1. تأكد من تثبيت Python 3.11 أو أحدث.
 2. استنسخ المستودع:
    ```bash
-   git clone https://github.com/username/medical-telegram-bot.git
+   git clone https://github.com/username/med_bot.git
