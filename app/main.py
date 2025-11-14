@@ -117,10 +117,10 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             file_info = msg["video"]
             content_type = "video"
 
-        # ===== إدارة الملفات المؤقتة من الأدمن =====
+        # ===== إدارة الملفات المؤقتة من الأدمن مع الكاش =====
         if file_info and is_admin(user):
             file_id = file_info.get("file_id")
-            if crud.is_waiting_file(chat_id):
+            if crud.is_waiting_file(chat_id, use_cache=True):
                 crud.set_waiting_file_fileid(chat_id, file_id, content_type, doctor="")
                 send_message(chat_id, "✅ تم استلام الملف. الآن *اكتب اسم الدكتور* لهذا الملف (أرسله كرسالة نصية).")
             else:
@@ -129,8 +129,8 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
                 send_message(chat_id, "✅ تم استلام الملف. الآن *اكتب اسم الدكتور* لهذا الملف (أرسله كرسالة نصية).")
             return {"ok": True}
 
-        if text and crud.is_waiting_file(chat_id) and is_admin(user):
-            waiting = crud.get_waiting_file(chat_id)
+        if text and crud.is_waiting_file(chat_id, use_cache=True) and is_admin(user):
+            waiting = crud.get_waiting_file(chat_id, use_cache=True)
             if not waiting or not waiting.get("file_id"):
                 send_message(chat_id, "❌ لم يتم استلام ملف بعد. أرسل الملف أولًا ثم اسم الدكتور.")
                 return {"ok": True}
@@ -182,23 +182,22 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             send_message(chat_id, "⬅️ رجعت لاختيار المقرر:", reply_markup=get_courses_keyboard())
             return {"ok": True}
 
-        # ===== اختيار المقرر والنوع والدكتور =====
+        # ===== اختيار المقرر والنوع والدكتور مع الكاش =====
         course_names = [
             "Anatomy", "Pathology", "Histology", "Parasitology",
             "Physiology", "Biochemistry", "Embryology",
             "Microbiology", "Pharmacology"
         ]
 
-        if text and any(c == text for c in course_names) and crud.is_waiting_file(chat_id) and is_admin(user):
+        if text and any(c == text for c in course_names) and crud.is_waiting_file(chat_id, use_cache=True) and is_admin(user):
             selected_course = text
             send_message(chat_id, f"📂 اختر نوع المحتوى لمقرر {selected_course}:", reply_markup=get_types_keyboard(selected_course))
             return {"ok": True}
 
-        if text and any(x in text for x in ["PDF", "فيديو", "مرجع"]) and crud.is_waiting_file(chat_id) and is_admin(user):
-            parts = text.split()
-            course_name = parts[0]
+        if text and any(x in text for x in ["PDF", "فيديو", "مرجع"]) and crud.is_waiting_file(chat_id, use_cache=True) and is_admin(user):
+            course_name = text.split()[0]
             ctype = "pdf" if "PDF" in text else "video" if "فيديو" in text else "reference"
-            waiting = crud.get_waiting_file(chat_id)
+            waiting = crud.get_waiting_file(chat_id, use_cache=True)
             if not waiting or not waiting.get("file_id"):
                 send_message(chat_id, "❌ لم يتم العثور على الملف المؤقت. أعد العملية.")
                 return {"ok": True}
@@ -209,12 +208,11 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             send_message(chat_id, f"✅ تم حفظ الملف للمقرر *{course_name}* (type={ctype}) تحت الدكتور: {doctor or 'غير محدد'}")
             return {"ok": True}
 
-        # طلب الملفات من المستخدم
-        if text and any(x in text for x in ["PDF", "فيديو", "مرجع"]) and not crud.is_waiting_file(chat_id):
-            parts = text.split()
-            course_name = parts[0]
+        # طلب الملفات من المستخدم بدون تجاوز الحصة
+        if text and any(x in text for x in ["PDF", "فيديو", "مرجع"]) and not crud.is_waiting_file(chat_id, use_cache=True):
+            course_name = text.split()[0]
             ctype = "pdf" if "PDF" in text else "video" if "فيديو" in text else "reference"
-            doctors = crud.get_doctors_for_course_and_type(course_name, ctype)
+            doctors = crud.get_doctors_for_course_and_type(course_name, ctype, use_cache=True)
             if not doctors:
                 send_message(chat_id, "🚧 لم يتم العثور على دكاترة أو ملفات لهذا الاختيار بعد.")
                 return {"ok": True}
@@ -227,7 +225,7 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             found_any = False
             for course in course_names:
                 for ctype in ["pdf", "video", "reference"]:
-                    mats = crud.get_materials(course, ctype)
+                    mats = crud.get_materials(course, ctype, use_cache=True)
                     for m in mats:
                         if m.get("doctor") == doctor_name:
                             if not found_any:
