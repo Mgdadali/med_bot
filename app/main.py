@@ -1,297 +1,246 @@
 import os
+import requests
 import logging
-from telegram import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Update
-)
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    CallbackContext,
-    CallbackQueryHandler,
-    filters
-)
+from fastapi import FastAPI, Header, HTTPException
+from app import crud  # CRUD يتعامل مع Google Sheets وفق التعديل الأخير
 
-import crud  # تمت مراجعة الربط
-
+# ========= Logging مفصل =========
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    level=logging.DEBUG,
+    format="%(asctime)s - %(levelname)s - %(message)s"
 )
+logger = logging.getLogger(__name__)
 
-# =========================
-#     انتــلاق البــوت
-# =========================
-
+# ========= الإعدادات الأساسية =========
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("❌ BOT_TOKEN غير موجود!")
+WEBHOOK_SECRET_TOKEN = os.getenv("WEBHOOK_SECRET_TOKEN", None)
+ADMIN_USERNAME = "@Mgdad_Ali"
+TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-crud.init_db()
+app = FastAPI(title="Med Faculty Bot")
 
-# =========================
-#   دوال الواجهة الرئيسية
-# =========================
+@app.on_event("startup")
+async def startup():
+    crud.init_db()
+    logger.info("✅ Database initialized successfully.")
 
-def start(update: Update, context: CallbackContext):
-    chat_id = update.effective_chat.id
+# ========= دوال مساعدة =========
+def send_message(chat_id, text, reply_markup=None):
+    payload = {"chat_id": chat_id, "text": text}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    try:
+        r = requests.post(f"{TELEGRAM_API}/sendMessage", json=payload)
+        logger.info(f"Send message status: {r.status_code}, response: {r.text}")
+    except Exception as e:
+        logger.exception(f"Failed to send message: {e}")
 
-    keyboard = [
-        [
-            InlineKeyboardButton("📂 رفع محتوى جديد", callback_data="upload_menu"),
-            InlineKeyboardButton("📥 عرض المحتوى", callback_data="view_menu")
-        ]
-    ]
-    update.message.reply_text(
-        "👋 أهلاً بك في نظام إدارة محتوى كلية الطب.\nاختر ما تريده:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+def send_file(chat_id, file_id, content_type="pdf"):
+    try:
+        if content_type == "video":
+            r = requests.post(f"{TELEGRAM_API}/sendVideo", json={"chat_id": chat_id, "video": file_id})
+        else:
+            r = requests.post(f"{TELEGRAM_API}/sendDocument", json={"chat_id": chat_id, "document": file_id})
+        logger.info(f"Send file status: {r.status_code}, response: {r.text}")
+    except Exception as e:
+        logger.exception(f"Failed to send file: {e}")
 
-# =========================
-#   القائمة: رفع محتوى
-# =========================
+def is_admin(user):
+    return user.get("username") == ADMIN_USERNAME.replace("@", "")
 
-def upload_menu(update: Update, context: CallbackContext):
-    query = update.callback_query
-    chat_id = query.message.chat_id
+# ========= القوائم =========
+def get_main_keyboard(is_admin=False):
+    buttons = [[{"text": "ابدأ 🎓"}], [{"text": "تواصل مع المطور 👨‍💻"}]]
+    if is_admin:
+        buttons.append([{"text": "رفع ملف جديد 📤"}])
+    return {"keyboard": buttons, "resize_keyboard": True}
 
-    crud.set_waiting_file(chat_id, True)   # يجعل المستخدم في وضع انتظار ملف
-
-    query.message.reply_text(
-        "📤 أرسل الآن *الفيديو أو الملف* ليتم تسجيله.",
-        parse_mode=None
-    )
-
-
-# =========================
-#   استقبال ملف (فيديو أو PDF)
-# =========================
-
-def receive_file(update: Update, context: CallbackContext):
-    chat_id = update.effective_chat.id
-
-    if not crud.is_waiting_file(chat_id):
-        update.message.reply_text("❗ أرسل /start للبدء.")
-        return
-
-    file_id = None
-    type_ = None
-
-    if update.message.video:
-        file_id = update.message.video.file_id
-        type_ = "video"
-    elif update.message.document:
-        file_id = update.message.document.file_id
-        type_ = "document"
-    else:
-        update.message.reply_text("❗ يجب إرسال فيديو أو ملف.")
-        return
-
-    crud.set_waiting_file_fileid(chat_id, file_id, type_)
-
-    update.message.reply_text(
-        "👨‍⚕️ أدخل *اسم الدكتور* المسؤول عن هذا المحتوى:",
-        parse_mode=None
-    )
-
-# =========================
-#    إدخال اسم الدكتور
-# =========================
-
-def receive_doctor(update: Update, context: CallbackContext):
-    chat_id = update.effective_chat.id
-
-    if not crud.is_waiting_file(chat_id):
-        return
-
-    doctor = update.message.text.strip()
-    crud.set_waiting_file_doctor(chat_id, doctor)
-
-    keyboard = [
-        [
-            InlineKeyboardButton("Anatomy", callback_data="course_Anatomy"),
-            InlineKeyboardButton("Histology", callback_data="course_Histology"),
+def get_courses_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "Anatomy"}, {"text": "Pathology"}],
+            [{"text": "Histology"}, {"text": "Parasitology"}],
+            [{"text": "Physiology"}, {"text": "Biochemistry"}],
+            [{"text": "Embryology"}, {"text": "Microbiology"}],
+            [{"text": "Pharmacology"}, {"text": "🏠 القائمة الرئيسية"}],
+            [{"text": "⬅️ رجوع"}]
         ],
-        [
-            InlineKeyboardButton("Biochemistry", callback_data="course_Biochemistry"),
-            InlineKeyboardButton("Physiology", callback_data="course_Physiology")
-        ]
-    ]
+        "resize_keyboard": True
+    }
 
-    update.message.reply_text(
-        f"✔ تم حفظ اسم الدكتور: {doctor}\nالآن اختر *المادة*: ",
-        parse_mode=None,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-# =========================
-#     اختيار المادة
-# =========================
-
-def choose_course(update: Update, context: CallbackContext):
-    query = update.callback_query
-    chat_id = query.message.chat_id
-
-    course = query.data.replace("course_", "")
-    context.user_data["course"] = course
-
-    keyboard = [
-        [
-            InlineKeyboardButton("🎥 فيديو", callback_data="type_video"),
-            InlineKeyboardButton("📘 مرجع", callback_data="type_reference"),
+def get_types_keyboard(course):
+    return {
+        "keyboard": [
+            [{"text": f"{course} 📄 PDF"}, {"text": f"{course} 🎥 فيديو"}, {"text": f"{course} 📚 مرجع"}],
+            [{"text": "⬅️ رجوع"}, {"text": "🏠 القائمة الرئيسية"}]
         ],
-        [
-            InlineKeyboardButton("📄 PDF", callback_data="type_pdf"),
-        ]
-    ]
+        "resize_keyboard": True
+    }
 
-    query.message.reply_text(
-        f"📚 المادة: *{course}*\nاختر نوع المحتوى:",
-        parse_mode=None,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+def make_doctors_keyboard(doctors):
+    kb = []
+    row = []
+    for i, d in enumerate(doctors, start=1):
+        row.append({"text": d})
+        if len(row) == 2:
+            kb.append(row)
+            row = []
+    if row:
+        kb.append(row)
+    kb.append([{"text": "🏠 القائمة الرئيسية"}])
+    return {"keyboard": kb, "resize_keyboard": True}
 
-# =========================
-#     اختيار نوع المحتوى
-# =========================
+# ========= Webhook =========
+@app.post("/webhook")
+async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(None)):
+    try:
+        if WEBHOOK_SECRET_TOKEN and x_telegram_bot_api_secret_token != WEBHOOK_SECRET_TOKEN:
+            logger.warning("Invalid secret token received.")
+            raise HTTPException(status_code=401, detail="Invalid secret header")
 
-def choose_type(update: Update, context: CallbackContext):
-    query = update.callback_query
-    chat_id = query.message.chat_id
+        logger.debug(f"Received update: {update}")
+        msg = update.get("message")
+        if not msg:
+            return {"ok": True}
 
-    selected_type = query.data.replace("type_", "")
-    course = context.user_data.get("course")
+        chat_id = msg["chat"]["id"]
+        text = msg.get("text", "")
+        user = msg.get("from", {})
 
-    waiting = crud.get_waiting_file(chat_id)
+        # التقاط الملفات
+        file_info = None
+        content_type = None
+        if "document" in msg:
+            file_info = msg["document"]
+            content_type = "pdf"
+        elif "video" in msg:
+            file_info = msg["video"]
+            content_type = "video"
 
-    if not waiting or not waiting.get("file_id"):
-        query.message.reply_text("❌ لم يتم العثور على الملف. أعد إرسال الملف من البداية.")
-        crud.set_waiting_file(chat_id, False)
-        return
-
-    doctor = waiting.get("doctor") or ""
-    file_id = waiting.get("file_id")
-
-    # حفظ الصف النهائي
-    crud.add_material(course, selected_type, file_id, doctor)
-
-    crud.set_waiting_file(chat_id, False)
-
-    query.message.reply_text(
-        "🎉 تم حفظ المحتوى بنجاح!\n"
-        f"📚 المادة: {course}\n"
-        f"📝 النوع: {selected_type}\n"
-        f"👨‍⚕ الدكتور: {doctor}",
-        parse_mode=None
-    )
-
-
-# =========================
-#     عرض المحتوى
-# =========================
-
-def view_menu(update: Update, context: CallbackContext):
-    query = update.callback_query
-
-    keyboard = [
-        [
-            InlineKeyboardButton("Anatomy", callback_data="viewcourse_Anatomy"),
-            InlineKeyboardButton("Histology", callback_data="viewcourse_Histology"),
-        ],
-        [
-            InlineKeyboardButton("Biochemistry", callback_data="viewcourse_Biochemistry"),
-            InlineKeyboardButton("Physiology", callback_data="viewcourse_Physiology")
-        ]
-    ]
-
-    query.message.reply_text(
-        "📥 اختر المادة لعرض محتوياتها:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-def view_course(update: Update, context: CallbackContext):
-    query = update.callback_query
-    course = query.data.replace("viewcourse_", "")
-
-    keyboard = [
-        [
-            InlineKeyboardButton("🎥 فيديو", callback_data=f"viewtype_{course}_video"),
-            InlineKeyboardButton("📘 مرجع", callback_data=f"viewtype_{course}_reference"),
-        ],
-        [
-            InlineKeyboardButton("📄 PDF", callback_data=f"viewtype_{course}_pdf")
-        ]
-    ]
-
-    query.message.reply_text(
-        f"📚 اختر نوع المحتوى لمادة *{course}*:",
-        parse_mode=None,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-def view_type(update: Update, context: CallbackContext):
-    query = update.callback_query
-    _, course, type_ = query.data.split("_")
-
-    materials = crud.get_materials(course, type_)
-
-    if not materials:
-        query.message.reply_text("❌ لا يوجد محتوى مسجل لهذا النوع.")
-        return
-
-    for item in materials:
-        file_id = item["file_id"]
-        doctor = item["doctor"]
-
-        caption = f"👨‍⚕ {doctor}\n📚 {course}\n📝 {type_}"
-
-        try:
-            if type_ == "video":
-                query.message.reply_video(file_id, caption=caption, parse_mode=None)
+        # ===== إدارة الملفات المؤقتة من الأدمن =====
+        if file_info and is_admin(user):
+            file_id = file_info.get("file_id")
+            if crud.is_waiting_file(chat_id):
+                crud.set_waiting_file_fileid(chat_id, file_id, content_type, doctor="")
+                send_message(chat_id, "✅ تم استلام الملف. الآن *اكتب اسم الدكتور* لهذا الملف (أرسله كرسالة نصية).")
             else:
-                query.message.reply_document(file_id, caption=caption, parse_mode=None)
-        except Exception as e:
-            query.message.reply_text(f"❌ خطأ أثناء عرض المحتوى: {e}")
+                crud.set_waiting_file(chat_id, True)
+                crud.set_waiting_file_fileid(chat_id, file_id, content_type, doctor="")
+                send_message(chat_id, "✅ تم استلام الملف. الآن *اكتب اسم الدكتور* لهذا الملف (أرسله كرسالة نصية).")
+            return {"ok": True}
 
+        if text and crud.is_waiting_file(chat_id) and is_admin(user):
+            waiting = crud.get_waiting_file(chat_id)
+            if not waiting or not waiting.get("file_id"):
+                send_message(chat_id, "❌ لم يتم استلام ملف بعد. أرسل الملف أولًا ثم اسم الدكتور.")
+                return {"ok": True}
+            if not waiting.get("doctor"):
+                doctor_name = text.strip()
+                crud.set_waiting_file_doctor(chat_id, doctor_name)
+                send_message(chat_id, f"✅ تم تسجيل دكتور: *{doctor_name}*.\nاختر المقرر الذي تريد ربط الملف به:", reply_markup=get_courses_keyboard())
+                return {"ok": True}
 
-# =========================
-#       تشغيل البوت
-# =========================
+        # ===== أوامر الأدمن =====
+        if text == "رفع ملف جديد 📤" and is_admin(user):
+            crud.set_waiting_file(chat_id, True)
+            send_message(chat_id, "📤 الآن أرسل الملف (PDF / فيديو) وسأطلب اسم الدكتور بعد الاستلام.")
+            return {"ok": True}
 
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+        if text and text.startswith("/addfile") and is_admin(user):
+            parts = text.split()
+            if len(parts) == 4:
+                course, ctype, file_id = parts[1], parts[2], parts[3]
+                crud.add_material(course, ctype, file_id, doctor=None)
+                send_message(chat_id, f"✅ تمت إضافة {ctype} لمادة {course} بنجاح!")
+            else:
+                send_message(chat_id, "❌ الصيغة الصحيحة:\n/addfile <course> <type> <file_id>")
+            return {"ok": True}
 
-    # أوامر رئيسية
-    app.add_handler(CommandHandler("start", start))
+        # ===== أوامر المستخدم =====
+        if text == "/start":
+            welcome_text = (
+                "👋 مرحبًا بك في بوت كلية الطب – جامعة المناقل!\n\n"
+                "📚 هذا البوت يساعدك للوصول إلى محتوى المقررات بسهولة.\n"
+                "⚠️ تنويه: البوت في مراحل الصيانة لرفع كميات كبيرة من المواد.\n"
+            )
+            send_message(chat_id, welcome_text, reply_markup=get_main_keyboard(is_admin(user)))
+            return {"ok": True}
 
-    # رفع ملف
-    app.add_handler(CallbackQueryHandler(upload_menu, pattern="upload_menu"))
+        if text == "تواصل مع المطور 👨‍💻":
+            send_message(chat_id, f"📩 تواصل مع المطور: {ADMIN_USERNAME}")
+            return {"ok": True}
 
-    # لوحة عرض
-    app.add_handler(CallbackQueryHandler(view_menu, pattern="view_menu"))
+        if text == "🏠 القائمة الرئيسية":
+            send_message(chat_id, "🏠 عدت إلى القائمة الرئيسية", reply_markup=get_main_keyboard(is_admin(user)))
+            return {"ok": True}
 
-    # إرسال ملف
-    app.add_handler(MessageHandler(filters.VIDEO | filters.Document.ALL, receive_file))
+        if text == "ابدأ 🎓":
+            send_message(chat_id, "📚 اختر المقرر الدراسي:", reply_markup=get_courses_keyboard())
+            return {"ok": True}
 
-    # إدخال اسم الدكتور
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_doctor))
+        if text == "⬅️ رجوع":
+            send_message(chat_id, "⬅️ رجعت لاختيار المقرر:", reply_markup=get_courses_keyboard())
+            return {"ok": True}
 
-    # اختيار مادة
-    app.add_handler(CallbackQueryHandler(choose_course, pattern="course_"))
+        # ===== اختيار المقرر والنوع والدكتور =====
+        course_names = [
+            "Anatomy", "Pathology", "Histology", "Parasitology",
+            "Physiology", "Biochemistry", "Embryology",
+            "Microbiology", "Pharmacology"
+        ]
 
-    # اختيار نوع المحتوى (رفع)
-    app.add_handler(CallbackQueryHandler(choose_type, pattern="type_"))
+        if text and any(c == text for c in course_names) and crud.is_waiting_file(chat_id) and is_admin(user):
+            selected_course = text
+            send_message(chat_id, f"📂 اختر نوع المحتوى لمقرر {selected_course}:", reply_markup=get_types_keyboard(selected_course))
+            return {"ok": True}
 
-    # عرض
-    app.add_handler(CallbackQueryHandler(view_course, pattern="viewcourse_"))
-    app.add_handler(CallbackQueryHandler(view_type, pattern="viewtype_"))
+        if text and any(x in text for x in ["PDF", "فيديو", "مرجع"]) and crud.is_waiting_file(chat_id) and is_admin(user):
+            parts = text.split()
+            course_name = parts[0]
+            ctype = "pdf" if "PDF" in text else "video" if "فيديو" in text else "reference"
+            waiting = crud.get_waiting_file(chat_id)
+            if not waiting or not waiting.get("file_id"):
+                send_message(chat_id, "❌ لم يتم العثور على الملف المؤقت. أعد العملية.")
+                return {"ok": True}
+            file_id = waiting.get("file_id")
+            doctor = waiting.get("doctor") or None
+            crud.add_material(course_name, ctype, file_id, doctor=doctor)
+            crud.set_waiting_file(chat_id, False)
+            send_message(chat_id, f"✅ تم حفظ الملف للمقرر *{course_name}* (type={ctype}) تحت الدكتور: {doctor or 'غير محدد'}")
+            return {"ok": True}
 
-    app.run_polling()
+        # طلب الملفات من المستخدم
+        if text and any(x in text for x in ["PDF", "فيديو", "مرجع"]) and not crud.is_waiting_file(chat_id):
+            parts = text.split()
+            course_name = parts[0]
+            ctype = "pdf" if "PDF" in text else "video" if "فيديو" in text else "reference"
+            doctors = crud.get_doctors_for_course_and_type(course_name, ctype)
+            if not doctors:
+                send_message(chat_id, "🚧 لم يتم العثور على دكاترة أو ملفات لهذا الاختيار بعد.")
+                return {"ok": True}
+            send_message(chat_id, f"👨‍🏫 اختر الدكتور لعرض ملفاته في {course_name} ({ctype}):", reply_markup=make_doctors_keyboard(doctors))
+            return {"ok": True}
 
+        # اختيار اسم الدكتور
+        if text:
+            doctor_name = text.strip()
+            found_any = False
+            for course in course_names:
+                for ctype in ["pdf", "video", "reference"]:
+                    mats = crud.get_materials(course, ctype)
+                    for m in mats:
+                        if m.get("doctor") == doctor_name:
+                            if not found_any:
+                                send_message(chat_id, f"📤 ملفات الدكتور {doctor_name}:")
+                                found_any = True
+                            send_file(chat_id, m.get("file_id"), content_type=ctype)
+            if found_any:
+                return {"ok": True}
 
-if __name__ == "__main__":
-    main()
+        # افتراضي
+        send_message(chat_id, "🤔 لم أفهم الأمر، يرجى اختيار من القائمة.")
+        return {"ok": True}
+
+    except Exception as e:
+        logger.exception(f"Exception in webhook processing: {e}")
+        return {"ok": True}
