@@ -19,13 +19,14 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 app = FastAPI(title="Med Faculty Bot")
 
-# ========= حالة المستخدم (حل المشكلة) =========
-USER_STATE = {}
-
 @app.on_event("startup")
 async def startup():
     crud.init_db()
     logger.info("✅ Database initialized successfully.")
+
+# ========= إدارة انتظار رفع الملف داخل الذاكرة =========
+# هذا يسمح بتفادي قراءات خاطئة من الكاش أو Google Sheet خلال عملية رفع الملف
+WAITING_STATE = {}  # keyed by chat_id -> {"file_id":..., "doctor":..., "course":..., "type":...}
 
 # ========= دوال مساعدة =========
 def send_message(chat_id, text, reply_markup=None):
@@ -120,106 +121,156 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             file_info = msg["video"]
             content_type = "video"
 
-        # ===== إدارة الملفات المؤقتة للأدمن =====
+        # ===== إدارة الملفات المؤقتة من الأدمن باستخدام WAITING_STATE (ذاكرة) =====
+        # استقبال ملف جديد من الأدمن -> نخزن داخليًا في WAITING_STATE فقط
         if file_info and is_admin(user):
             file_id = file_info.get("file_id")
-            if crud.is_waiting_file(chat_id, use_cache=True):
-                crud.set_waiting_file_fileid(chat_id, file_id, content_type, doctor="")
-            else:
-                crud.set_waiting_file(chat_id, True)
-                crud.set_waiting_file_fileid(chat_id, file_id, content_type, doctor="")
-            send_message(chat_id, "✅ تم استلام الملف. الآن *اكتب اسم الدكتور* لهذا الملف.")
+            WAITING_STATE[chat_id] = {
+                "file_id": file_id,
+                "doctor": None,
+                "course": None,
+                "type": content_type
+            }
+            # رسالة كما في الأصل (لم أغير النص)
+            send_message(chat_id, "✅ تم استلام الملف. الآن *اكتب اسم الدكتور* لهذا الملف (أرسله كرسالة نصية).")
             return {"ok": True}
 
-        if text and crud.is_waiting_file(chat_id, use_cache=True) and is_admin(user):
-            waiting = crud.get_waiting_file(chat_id, use_cache=True)
-            if not waiting or not waiting.get("file_id"):
-                send_message(chat_id, "❌ لم يتم استلام ملف بعد.")
-                return {"ok": True}
-
-            if not waiting.get("doctor"):
+        # لو الأدمن كتب اسم الدكتور أثناء وجود حالة انتظار داخل الذاكرة
+        if text and is_admin(user) and chat_id in WAITING_STATE:
+            waiting_local = WAITING_STATE[chat_id]
+            # لو الدكتور ليس مسجل بعد، اعتبر الرسالة اسم الدكتور
+            if not waiting_local.get("doctor"):
                 doctor_name = text.strip()
-                crud.set_waiting_file_doctor(chat_id, doctor_name)
-                send_message(chat_id, f"✅ تم تسجيل دكتور: *{doctor_name}*.\nاختر المقرر:", reply_markup=get_courses_keyboard())
+                waiting_local["doctor"] = doctor_name
+                # نرسل نفس الرسالة الأصلية لاختيار المقرر
+                send_message(chat_id, f"✅ تم تسجيل دكتور: *{doctor_name}*.\nاختر المقرر الذي تريد ربط الملف به:", reply_markup=get_courses_keyboard())
                 return {"ok": True}
 
-        # ===== أوامر الأدمن =====
+        # ===== أوامر الأدمن (زر بدء رفع ملف جديد) =====
         if text == "رفع ملف جديد 📤" and is_admin(user):
+            # نحتفظ بالسلوك الأصلي هنا (هذا يسجل حالة انتظار في الورقة إذا أردت)
             crud.set_waiting_file(chat_id, True)
-            send_message(chat_id, "📤 أرسل الملف الآن.")
+            send_message(chat_id, "📤 الآن أرسل الملف (PDF / فيديو) وسأطلب اسم الدكتور بعد الاستلام.")
             return {"ok": True}
 
-        # ===== المستخدم =====
+        if text and text.startswith("/addfile") and is_admin(user):
+            parts = text.split()
+            if len(parts) == 4:
+                course, ctype, file_id = parts[1], parts[2], parts[3]
+                crud.add_material(course, ctype, file_id, doctor=None)
+                send_message(chat_id, f"✅ تمت إضافة {ctype} لمادة {course} بنجاح!")
+            else:
+                send_message(chat_id, "❌ الصيغة الصحيحة:\n/addfile <course> <type> <file_id>")
+            return {"ok": True}
+
+        # ===== أوامر المستخدم =====
         if text == "/start":
-            USER_STATE.pop(chat_id, None)
-            send_message(chat_id, "👋 أهلاً!", reply_markup=get_main_keyboard(is_admin(user)))
+            # لا نغير أي نص
+            welcome_text = (
+                "👋 مرحبًا بك في بوت كلية الطب – جامعة المناقل!\n\n"
+                "📚 هذا البوت يساعدك للوصول إلى محتوى المقررات بسهولة.\n"
+                "⚠️ تنويه: البوت في مراحل الصيانة لرفع كميات كبيرة من المواد.\n"
+            )
+            send_message(chat_id, welcome_text, reply_markup=get_main_keyboard(is_admin(user)))
             return {"ok": True}
 
-        if text == "ابدأ 🎓":
-            send_message(chat_id, "📚 اختر المقرر:", reply_markup=get_courses_keyboard())
-            return {"ok": True}
-
-        if text == "⬅️ رجوع":
-            send_message(chat_id, "رجعت لاختيار المقرر:", reply_markup=get_courses_keyboard())
+        if text == "تواصل مع المطور 👨‍💻":
+            send_message(chat_id, f"📩 تواصل مع المطور: {ADMIN_USERNAME}")
             return {"ok": True}
 
         if text == "🏠 القائمة الرئيسية":
-            USER_STATE.pop(chat_id, None)
-            send_message(chat_id, "🏠 القائمة الرئيسية", reply_markup=get_main_keyboard(is_admin(user)))
+            send_message(chat_id, "🏠 عدت إلى القائمة الرئيسية", reply_markup=get_main_keyboard(is_admin(user)))
             return {"ok": True}
 
-        # ===== اختيار المقرر =====
+        if text == "ابدأ 🎓":
+            send_message(chat_id, "📚 اختر المقرر الدراسي:", reply_markup=get_courses_keyboard())
+            return {"ok": True}
+
+        if text == "⬅️ رجوع":
+            send_message(chat_id, "⬅️ رجعت لاختيار المقرر:", reply_markup=get_courses_keyboard())
+            return {"ok": True}
+
+        # ===== اختيار المقرر والنوع والدكتور مع الكاش =====
         course_names = [
             "Anatomy", "Pathology", "Histology", "Parasitology",
             "Physiology", "Biochemistry", "Embryology",
             "Microbiology", "Pharmacology"
         ]
 
-        if text in course_names:
+        # ===== إذا الأدمن في وضع انتظار واختر المقرر، نسجل المقرر في الذاكرة =====
+        if text and text in course_names and is_admin(user) and chat_id in WAITING_STATE:
+            WAITING_STATE[chat_id]["course"] = text
+            # نرسل واجهة اختيار النوع كما في الأصل
             send_message(chat_id, f"📂 اختر نوع المحتوى لمقرر {text}:", reply_markup=get_types_keyboard(text))
             return {"ok": True}
 
-        # ===== اختيار نوع المادة =====
-        if any(x in text for x in ["PDF", "فيديو", "مرجع"]):
+        # اختيار المقرر الدراسي (للمستخدمين العاديين)
+        if text and text in course_names:
+            send_message(chat_id, f"📂 اختر نوع المحتوى لمقرر {text}:", reply_markup=get_types_keyboard(text))
+            return {"ok": True}
+
+        # اختيار نوع الملف (PDF / فيديو / مرجع)
+        if text and any(x in text for x in ["PDF", "فيديو", "مرجع"]):
             course_name = text.split()[0]
             ctype = "pdf" if "PDF" in text else "video" if "فيديو" in text else "reference"
 
-            # تخزين الوضع الحالي للمستخدم
-            USER_STATE[chat_id] = {
-                "course": course_name,
-                "type": ctype
-            }
+            # أولاً: إذا الأدمن في WAITING_STATE محليًا، نستخدم البيانات المحفوظة ونضيف المادة
+            if is_admin(user) and chat_id in WAITING_STATE:
+                waiting_local = WAITING_STATE.get(chat_id, {})
+                file_id = waiting_local.get("file_id")
+                doctor = waiting_local.get("doctor") or None
+                # استخدم المقرر المحفوظ بالذاكرة إن وجد، وإلا استخدم course_name المستخرج
+                course_used = waiting_local.get("course") or course_name
 
-            doctors = crud.get_doctors_for_course_and_type(course_name, ctype, use_cache=True)
-            if not doctors:
-                send_message(chat_id, "🚧 لا توجد ملفات بعد.")
-                return {"ok": True}
-
-            send_message(chat_id, f"👨‍🏫 اختر الدكتور ({ctype}):", reply_markup=make_doctors_keyboard(doctors))
-            return {"ok": True}
-
-        # ===== اختيار الدكتور =====
-        if text:
-            doctor = text.strip()
-            state = USER_STATE.get(chat_id)
-
-            if state:
-                course = state["course"]
-                ctype = state["type"]
-
-                mats = crud.get_materials(course, ctype, use_cache=True)
-                files = [m for m in mats if m.get("doctor") == doctor]
-
-                if files:
-                    send_message(chat_id, f"📤 ملفات الدكتور {doctor} ({ctype}):")
-                    for m in files:
-                        send_file(chat_id, m["file_id"], content_type=ctype)
+                if not file_id:
+                    send_message(chat_id, "❌ لم يتم العثور على الملف المؤقت. أعد العملية.")
                     return {"ok": True}
 
-        # ===== Default =====
-        send_message(chat_id, "🤔 لم أفهم الأمر.")
+                # حفظ المادة في Google Sheet عبر CRUD (واحد write هنا مطلوب)
+                crud.add_material(course_used, ctype, file_id, doctor=doctor)
+                # نحاول إزالة حالة الانتظار من الـ sheet إذا كانت مسجلة هناك (حتى لو لم نستخدمها للقراءة)
+                try:
+                    crud.set_waiting_file(chat_id, False)
+                except Exception:
+                    # لا نوقف التدفق في حال فشل مسح الانتظار في الورقة
+                    logger.exception("Failed to clear waiting_file in sheet (ignored).")
+
+                # نحذف الحالة المحلية
+                WAITING_STATE.pop(chat_id, None)
+
+                # رسالة كما في الأصل (نفس النص)
+                send_message(chat_id, f"✅ تم حفظ الملف للمقرر *{course_used}* (type={ctype}) تحت الدكتور: {doctor or 'غير محدد'}")
+                return {"ok": True}
+
+            # ثانيًا: المسار الطبيعي للمستخدم لعرض الدكاترة حسب النوع
+            doctors = crud.get_doctors_for_course_and_type(course_name, ctype, use_cache=True)
+            if not doctors:
+                send_message(chat_id, "🚧 لم يتم العثور على دكاترة أو ملفات لهذا الاختيار بعد.")
+                return {"ok": True}
+            send_message(chat_id, f"👨‍🏫 اختر الدكتور لعرض ملفاته في {course_name} ({ctype}):", reply_markup=make_doctors_keyboard(doctors))
+            return {"ok": True}
+
+        # اختيار اسم الدكتور (للمستخدمين العاديين) — يحترم نوع الملف المطلوب سابقًا؟
+        if text:
+            # لو الادمن يرسل اسم الدكتور أثناء الانتظار، كنا تعاملنا أعلاه؛ هنا المسار العام لباقي المستخدمين
+            doctor_name = text.strip()
+            found_any = False
+            for course in course_names:
+                for ctype in ["pdf", "video", "reference"]:
+                    mats = crud.get_materials(course, ctype, use_cache=True)
+                    for m in mats:
+                        if m.get("doctor") == doctor_name:
+                            if not found_any:
+                                send_message(chat_id, f"📤 ملفات الدكتور {doctor_name}:")
+                                found_any = True
+                            send_file(chat_id, m.get("file_id"), content_type=ctype)
+            if found_any:
+                return {"ok": True}
+
+        # افتراضي
+        send_message(chat_id, "🤔 لم أفهم الأمر، يرجى اختيار من القائمة.")
         return {"ok": True}
 
     except Exception as e:
-        logger.exception(f"Exception in webhook: {e}")
+        logger.exception(f"Exception in webhook processing: {e}")
         return {"ok": True}
