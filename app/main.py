@@ -66,7 +66,9 @@ def get_semesters_keyboard():
         "keyboard": [
             [{"text": "الفصل الأول 1️⃣"}, {"text": "الفصل الثاني 2️⃣"}],
             [{"text": "الفصل الثالث 3️⃣"}, {"text": "الفصل الرابع 4️⃣"}],
-            [{"text": "الفصل الخامس 5️⃣"}],
+            [{"text": "الفصل الخامس 5️⃣"}, {"text": "الفصل السادس 6️⃣"}],
+            [{"text": "الفصل السابع 7️⃣"}, {"text": "الفصل الثامن 8️⃣"}],
+            [{"text": "الفصل التاسع 9️⃣"}, {"text": "الفصل العاشر 🔟"}],
             [{"text": "🏠 القائمة الرئيسية"}]
         ],
         "resize_keyboard": True
@@ -75,11 +77,41 @@ def get_semesters_keyboard():
 def get_courses_keyboard(semester):
     # تحديد المقررات حسب كل سمستر
     courses_map = {
-        "1": [["Anatomy"], ["Histology"], ["Embryology"]],
-        "2": [["Anatomy"], ["Physiology"], ["Biochemistry"]],
-        "3": [["Pathology"], ["Pharmacology"], ["Microbiology"]],
-        "4": [["Pathology"], ["Pharmacology"], ["Parasitology"]],
-        "5": [["Medicine"], ["Surgery"], ["Pediatrics"]],
+        "1": [
+            [{"text": "🚧 المواد غير متوفرة حالياً"}]
+        ],
+        "2": [
+            [{"text": "English"}, {"text": "Statistic"}],
+            [{"text": "Nutrition"}, {"text": "Ethics"}],
+            [{"text": "Embryology"}, {"text": "Computer"}]
+        ],
+        "3": [
+            [{"text": "دراسات سودانية"}, {"text": "Community"}],
+            [{"text": "Pathology"}, {"text": "musculoskeletal system"}]
+        ],
+        "4": [
+            [{"text": "Primary Health Care"}],
+            [{"text": "Cardiopulmonary"}, {"text": "Hematology"}]
+        ],
+        "5": [
+            [{"text": "Primary Health Care"}, {"text": "Pharmacology"}],
+            [{"text": "Endocrinology"}, {"text": "Cardiopulmonary"}]
+        ],
+        "6": [
+            [{"text": "Gastrointestinal Tract"}]
+        ],
+        "7": [
+            [{"text": "🚧 المواد غير متوفرة حالياً"}]
+        ],
+        "8": [
+            [{"text": "🚧 المواد غير متوفرة حالياً"}]
+        ],
+        "9": [
+            [{"text": "🚧 المواد غير متوفرة حالياً"}]
+        ],
+        "10": [
+            [{"text": "🚧 المواد غير متوفرة حالياً"}]
+        ]
     }
     
     course_buttons = courses_map.get(semester, [[{"text": "لا توجد مقررات"}]])
@@ -158,7 +190,7 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             welcome_text = (
                 "👋 مرحبًا بك في بوت كلية الطب – جامعة المناقل!\n\n"
                 "📚 هذا البوت يساعدك للوصول إلى محتوى المقررات بسهولة.\n"
-                "⚠️ تنويه: البوت في مراحل الصيانة لرفع كميات كبيرة من المواد.\n"
+                "⚠️ تنويه: البوت في مراحل الاعداد لرفع كميات كبيرة من المواد.\n"
             )
             send_message(chat_id, welcome_text, reply_markup=get_main_keyboard(is_admin(user)))
             return {"ok": True}
@@ -204,7 +236,12 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             "الفصل الثاني 2️⃣": "2",
             "الفصل الثالث 3️⃣": "3",
             "الفصل الرابع 4️⃣": "4",
-            "الفصل الخامس 5️⃣": "5"
+            "الفصل الخامس 5️⃣": "5",
+            "الفصل السادس 6️⃣": "6",
+            "الفصل السابع 7️⃣": "7",
+            "الفصل الثامن 8️⃣": "8",
+            "الفصل التاسع 9️⃣": "9",
+            "الفصل العاشر 🔟": "10"
         }
         
         if text in semester_map:
@@ -223,9 +260,16 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
 
         # ===== اختيار المقرر =====
         course_names = [
-            "Anatomy", "Pathology", "Histology", "Parasitology",
-            "Physiology", "Biochemistry", "Embryology",
-            "Microbiology", "Pharmacology", "Medicine", "Surgery", "Pediatrics"
+            # السمستر الثاني
+            "English", "Statistic", "Nutrition", "Ethics", "Embryology", "Computer",
+            # السمستر الثالث
+            "دراسات سودانية", "Community", "Pathology", "musculoskeletal system",
+            # السمستر الرابع
+            "Primary Health Care", "Cardiopulmonary", "Hematology",
+            # السمستر الخامس
+            "Pharmacology", "Endocrinology",
+            # السمستر السادس
+            "Gastrointestinal Tract"
         ]
 
         if text in course_names:
