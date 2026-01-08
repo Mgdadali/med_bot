@@ -24,8 +24,8 @@ async def startup():
     crud.init_db()
     logger.info("✅ Database initialized successfully.")
 
-# ========= إدارة انتظار رفع الملف داخل الذاكرة =========
-WAITING_STATE = {}  # keyed by chat_id -> {"file_id":..., "semester":..., "course":..., "type":...}
+# ========= إدارة رفع الملفات المتعددة للأدمن =========
+UPLOAD_SESSION = {}  # keyed by chat_id -> {"semester":..., "course":..., "type":..., "files": [file_id1, file_id2, ...]}
 
 # ========= حالة المستخدم لاختيار السمستر والمقرر والنوع =========
 USER_STATE = {}  # keyed by chat_id -> {"semester": ..., "course": ..., "type": ...}
@@ -129,6 +129,15 @@ def get_types_keyboard(course):
         "resize_keyboard": True
     }
 
+def get_upload_finish_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "✅ انتهيت من الرفع"}],
+            [{"text": "❌ إلغاء العملية"}]
+        ],
+        "resize_keyboard": True
+    }
+
 # ========= Webhook =========
 @app.post("/webhook")
 async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(None)):
@@ -156,22 +165,73 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             file_info = msg["video"]
             content_type = "video"
 
-        # ===== إدارة الملفات من الأدمن =====
-        if file_info and is_admin(user):
+        # ===== استقبال الملفات من الأدمن أثناء جلسة رفع نشطة =====
+        if file_info and is_admin(user) and chat_id in UPLOAD_SESSION:
+            session = UPLOAD_SESSION[chat_id]
             file_id = file_info.get("file_id")
-            WAITING_STATE[chat_id] = {
-                "file_id": file_id,
-                "semester": None,
-                "course": None,
-                "type": content_type
-            }
-            send_message(chat_id, "✅ تم استلام الملف. الآن اختر السمستر:", reply_markup=get_semesters_keyboard())
+            
+            # تأكد من أن النوع متطابق
+            if session.get("type") == content_type:
+                session["files"].append(file_id)
+                files_count = len(session["files"])
+                send_message(
+                    chat_id, 
+                    f"✅ تم استلام الملف #{files_count}\n\n"
+                    f"📊 إجمالي الملفات المستلمة: {files_count}\n\n"
+                    f"يمكنك إرسال المزيد أو اضغط '✅ انتهيت من الرفع' للحفظ.",
+                    reply_markup=get_upload_finish_keyboard()
+                )
+            else:
+                send_message(chat_id, f"⚠️ نوع الملف غير متطابق! اخترت {session.get('type')} ولكن أرسلت {content_type}")
+            
+            return {"ok": True}
+
+        # ===== زر "انتهيت من الرفع" - حفظ كل الملفات =====
+        if text == "✅ انتهيت من الرفع" and is_admin(user) and chat_id in UPLOAD_SESSION:
+            session = UPLOAD_SESSION[chat_id]
+            semester = session.get("semester")
+            course = session.get("course")
+            ctype = session.get("type")
+            files = session.get("files", [])
+            
+            if not files:
+                send_message(chat_id, "⚠️ لم يتم رفع أي ملفات! أرسل الملفات أولاً.")
+                return {"ok": True}
+            
+            # حفظ كل الملفات في قاعدة البيانات
+            saved_count = 0
+            for file_id in files:
+                try:
+                    crud.add_material(semester, course, ctype, file_id)
+                    saved_count += 1
+                except Exception as e:
+                    logger.exception(f"Failed to save file {file_id}: {e}")
+            
+            # مسح الجلسة
+            UPLOAD_SESSION.pop(chat_id, None)
+            
+            # رسالة تأكيد
+            send_message(
+                chat_id,
+                f"✅ تم حفظ {saved_count} ملف بنجاح!\n\n"
+                f"📚 السمستر: {semester}\n"
+                f"📖 المقرر: {course}\n"
+                f"📂 النوع: {ctype}",
+                reply_markup=get_main_keyboard(is_admin=True)
+            )
+            return {"ok": True}
+
+        # ===== زر "إلغاء العملية" =====
+        if text == "❌ إلغاء العملية" and is_admin(user) and chat_id in UPLOAD_SESSION:
+            UPLOAD_SESSION.pop(chat_id, None)
+            send_message(chat_id, "❌ تم إلغاء عملية الرفع.", reply_markup=get_main_keyboard(is_admin=True))
             return {"ok": True}
 
         # ===== أوامر الأدمن =====
         if text == "رفع ملف جديد 📤" and is_admin(user):
-            crud.set_waiting_file(chat_id, True)
-            send_message(chat_id, "📤 الآن أرسل الملف (PDF / فيديو) وسأطلب اختيار السمستر بعد الاستلام.")
+            # بدء جلسة رفع جديدة
+            UPLOAD_SESSION[chat_id] = {"semester": None, "course": None, "type": None, "files": []}
+            send_message(chat_id, "📤 اختر السمستر الذي تريد رفع الملفات له:", reply_markup=get_semesters_keyboard())
             return {"ok": True}
 
         if text and text.startswith("/addfile") and is_admin(user):
@@ -187,10 +247,11 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
         # ===== أوامر المستخدم =====
         if text == "/start":
             USER_STATE.pop(chat_id, None)
+            UPLOAD_SESSION.pop(chat_id, None)
             welcome_text = (
                 "👋 مرحبًا بك في بوت كلية الطب – جامعة المناقل!\n\n"
                 "📚 هذا البوت يساعدك للوصول إلى محتوى المقررات بسهولة.\n"
-                "⚠️ تنويه: البوت في مراحل الاعداد لرفع كميات كبيرة من المواد.\n"
+                "⚠️ تنويه: البوت في مراحل الصيانة لرفع كميات كبيرة من المواد.\n"
             )
             send_message(chat_id, welcome_text, reply_markup=get_main_keyboard(is_admin(user)))
             return {"ok": True}
@@ -201,7 +262,7 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
 
         if text == "🏠 القائمة الرئيسية":
             USER_STATE.pop(chat_id, None)
-            WAITING_STATE.pop(chat_id, None)
+            UPLOAD_SESSION.pop(chat_id, None)
             send_message(chat_id, "🏠 عدت إلى القائمة الرئيسية", reply_markup=get_main_keyboard(is_admin(user)))
             return {"ok": True}
 
@@ -247,9 +308,9 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
         if text in semester_map:
             semester = semester_map[text]
             
-            # للأدمن: حفظ السمستر في WAITING_STATE
-            if is_admin(user) and chat_id in WAITING_STATE:
-                WAITING_STATE[chat_id]["semester"] = semester
+            # للأدمن في جلسة رفع: حفظ السمستر
+            if is_admin(user) and chat_id in UPLOAD_SESSION:
+                UPLOAD_SESSION[chat_id]["semester"] = semester
                 send_message(chat_id, f"✅ تم اختيار {text}. الآن اختر المقرر:", reply_markup=get_courses_keyboard(semester))
                 return {"ok": True}
             
@@ -273,9 +334,9 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
         ]
 
         if text in course_names:
-            # للأدمن: حفظ المقرر في WAITING_STATE
-            if is_admin(user) and chat_id in WAITING_STATE:
-                WAITING_STATE[chat_id]["course"] = text
+            # للأدمن في جلسة رفع: حفظ المقرر
+            if is_admin(user) and chat_id in UPLOAD_SESSION:
+                UPLOAD_SESSION[chat_id]["course"] = text
                 send_message(chat_id, f"📂 اختر نوع المحتوى لمقرر {text}:", reply_markup=get_types_keyboard(text))
                 return {"ok": True}
             
@@ -295,26 +356,29 @@ async def webhook(update: dict, x_telegram_bot_api_secret_token: str = Header(No
             course_name = text.split()[0]
             ctype = "pdf" if "PDF" in text else "video" if "فيديو" in text else "reference"
 
-            # للأدمن: حفظ الملف نهائياً
-            if is_admin(user) and chat_id in WAITING_STATE:
-                waiting_local = WAITING_STATE.get(chat_id, {})
-                file_id = waiting_local.get("file_id")
-                semester = waiting_local.get("semester")
-                course = waiting_local.get("course") or course_name
+            # للأدمن في جلسة رفع: حفظ النوع وانتظار الملفات
+            if is_admin(user) and chat_id in UPLOAD_SESSION:
+                session = UPLOAD_SESSION[chat_id]
+                semester = session.get("semester")
+                course = session.get("course") or course_name
 
-                if not file_id or not semester:
+                if not semester or not course:
                     send_message(chat_id, "❌ بيانات غير مكتملة. أعد العملية.")
                     return {"ok": True}
 
-                crud.add_material(semester, course, ctype, file_id)
+                session["type"] = ctype
                 
-                try:
-                    crud.set_waiting_file(chat_id, False)
-                except Exception:
-                    logger.exception("Failed to clear waiting_file in sheet (ignored).")
-
-                WAITING_STATE.pop(chat_id, None)
-                send_message(chat_id, f"✅ تم حفظ الملف للسمستر {semester} - مقرر {course} ({ctype})")
+                file_type_text = "PDF" if ctype == "pdf" else "فيديو" if ctype == "video" else "مرجع"
+                send_message(
+                    chat_id,
+                    f"✅ تم اختيار: {file_type_text}\n\n"
+                    f"📚 السمستر: {semester}\n"
+                    f"📖 المقرر: {course}\n"
+                    f"📂 النوع: {file_type_text}\n\n"
+                    f"الآن أرسل الملفات ({file_type_text}) واحداً تلو الآخر.\n"
+                    f"عند الانتهاء اضغط '✅ انتهيت من الرفع'",
+                    reply_markup=get_upload_finish_keyboard()
+                )
                 return {"ok": True}
 
             # للمستخدم: عرض الملفات مباشرة
